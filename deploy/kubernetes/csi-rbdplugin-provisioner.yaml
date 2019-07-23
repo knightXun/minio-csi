@@ -1,0 +1,136 @@
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: csi-minioplugin-provisioner
+  labels:
+    app: csi-minioplugin-provisioner
+spec:
+  selector:
+    app: csi-minioplugin-provisioner
+  ports:
+    - name: dummy
+      port: 12345
+
+---
+kind: StatefulSet
+apiVersion: apps/v1
+metadata:
+  name: csi-minioplugin-provisioner
+spec:
+  serviceName: "csi-minioplugin-provisioner"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: csi-minioplugin-provisioner
+  template:
+    metadata:
+      labels:
+        app: csi-minioplugin-provisioner
+    spec:
+      serviceAccount: minio-csi-provisioner
+      containers:
+        - name: csi-provisioner
+          image: quay.io/k8scsi/csi-provisioner:v1.2.0
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+          env:
+            - name: ADDRESS
+              value: unix:///csi/csi-provisioner.sock
+          imagePullPolicy: "IfNotPresent"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: csi-snapshotter
+          image: quay.io/k8scsi/csi-snapshotter:v1.1.0
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--connection-timeout=15s"
+            - "--v=5"
+          env:
+            - name: ADDRESS
+              value: unix:///csi/csi-provisioner.sock
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: csi-attacher
+          image: quay.io/k8scsi/csi-attacher:v1.1.1
+          args:
+            - "--v=5"
+            - "--csi-address=$(ADDRESS)"
+          env:
+            - name: ADDRESS
+              value: /csi/csi-provisioner.sock
+          imagePullPolicy: "IfNotPresent"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: csi-minioplugin
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN"]
+          # for stable functionality replace canary with latest release version
+          image: quay.io/cephcsi/cephcsi:canary
+          args:
+            - "--nodeid=$(NODE_ID)"
+            - "--type=minio"
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--v=5"
+            - "--containerized=true"
+          env:
+            - name: HOST_ROOTFS
+              value: "/rootfs"
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi-provisioner.sock
+          imagePullPolicy: "IfNotPresent"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - mountPath: /dev
+              name: host-dev
+            - mountPath: /rootfs
+              name: host-rootfs
+            - mountPath: /sys
+              name: host-sys
+            - mountPath: /lib/modules
+              name: lib-modules
+              readOnly: true
+            - name: ceph-csi-config
+              mountPath: /etc/ceph-csi-config/
+      volumes:
+        - name: host-dev
+          hostPath:
+            path: /dev
+        - name: host-rootfs
+          hostPath:
+            path: /
+        - name: host-sys
+          hostPath:
+            path: /sys
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/s3fs.csi.minio.com
+            type: DirectoryOrCreate
+        - name: ceph-csi-config
+          configMap:
+            name: ceph-csi-config
+---
+apiVersion: storage.k8s.io/v1beta1
+kind: CSIDriver
+metadata:
+  name: s3fs.csi.minio.com
+spec:
+  attachRequired: false
+  podInfoOnMount: true
