@@ -20,9 +20,7 @@ static-check:
 	./scripts/lint-text.sh
 
 .PHONY: csi
-csi:
-	if [ ! -d ./vendor ]; then dep ensure -vendor-only; fi
-	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o  _output/csi ./cmd/
+csi: ./build/build-oss.sh
 
 image: csi
 	cp _output/csi deploy/

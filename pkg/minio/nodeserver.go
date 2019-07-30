@@ -3,9 +3,11 @@ package minio
 import (
 	"fmt"
 	"io/ioutil"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"minio/minio-csi/pkg/csi-common"
@@ -16,6 +18,13 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/util/mount"
+)
+
+
+const (
+	CredentialFile = "/host/etc/passwd-ossfs"
+	NSENTER_CMD    = "/nsenter --mount=/proc/1/ns/mnt"
+	SOCKET_PATH    = "/host/etc/csi-tool/connector.sock"
 )
 
 // NodeServer struct of ceph rbd driver with supported methods of CSI
@@ -126,9 +135,22 @@ func (ns *NodeServer) mountVolume(req *csi.NodePublishVolumeRequest) error {
 		targetPath, "-o", "curldbg", "-o", "no_check_certificate", "-o", "connect_timeout=5", "-o", "retries=1"} )
 
 
-	_, err = execCommand("/usr/bin/s3fs", []string{"-o", "passwd_file="+tmpFileName,
-		"-o", "url="+minioVol.minioURL,  "-o", "use_path_request_style", "-o", "bucket=" + minioVol.minioBucket ,
-		targetPath, "-o", "curldbg", "-o", "no_check_certificate", "-o", "connect_timeout=5", "-o", "retries=1"})
+	mntCmd := fmt.Sprintf("systemd-run --scope -- /usr/bin/s3fs -o passwd_file=%s -o url=%s -o use_path_request_style -o bucket=%s %s " +
+		" -o curldbg -o no_check_certificate -o retries=1 -o connect_timeout=5", tmpFileName, minioVol.minioURL, minioVol.minioBucket, targetPath)
+
+	//_, err = execCommand("/usr/bin/s3fs", []string{"-o", "passwd_file="+tmpFileName,
+	//	"-o", "url="+minioVol.minioURL,  "-o", "use_path_request_style", "-o", "bucket=" + minioVol.minioBucket ,
+	//	targetPath, "-o", "curldbg", "-o", "no_check_certificate", "-o", "connect_timeout=5", "-o", "retries=1"})
+
+	if out, err := connectorRun(mntCmd); err != nil {
+		out, err = connectorRun(mntCmd)
+		if err != nil {
+			klog.Error("S3fs mount error: ", err.Error())
+			return fmt.Errorf("Create S3fs volume fail: " + err.Error() + ", out: " + out)
+		}
+	}
+
+	klog.Info("Mount Oss successful: ", targetPath)
 
 	if err != nil {
 		klog.Errorln("s3fs mount error: ", err.Error())
@@ -216,4 +238,29 @@ func (ns *NodeServer) unmount(targetPath string) error {
 		klog.V(3).Infof("failed to remove targetPath: %s with error: %v", targetPath, err)
 	}
 	return err
+}
+
+// Run shell command with host connector
+// host connector is daemon running in host.
+func connectorRun(cmd string) (string, error) {
+	c, err := net.Dial("unix", SOCKET_PATH)
+	if err != nil {
+		return err.Error(), err
+	}
+	defer c.Close()
+
+	_, err = c.Write([]byte(cmd))
+	if err != nil {
+		klog.Errorf("write error: %s", err.Error())
+		return err.Error(), err
+	}
+
+	buf := make([]byte, 2048)
+	n, err := c.Read(buf[:])
+	response := string(buf[0:n])
+	if strings.HasPrefix(response, "Success") {
+		respstr := response[8:]
+		return respstr, nil
+	}
+	return response, fmt.Errorf("exec cmd err:" + response)
 }

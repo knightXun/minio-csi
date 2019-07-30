@@ -1,15 +1,13 @@
 package minio
 
 import (
-	"minio/minio-csi/pkg/csi-common"
-	"os"
-
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/util/mount"
 	nsutil "k8s.io/kubernetes/pkg/volume/util/nsenter"
 	"k8s.io/utils/exec"
 	"k8s.io/utils/nsenter"
+	"minio/minio-csi/pkg/csi-common"
 )
 
 // Driver contains the default identity,node and controller struct
@@ -78,12 +76,6 @@ func (r *Driver) Run(driverName, nodeID, endpoint, instanceID string, containeri
 		CSIInstanceID = instanceID
 	}
 
-	s3fsExist := checks3fsTools()
-
-	if !s3fsExist {
-		klog.Fatal("s3fs not existed")
-		os.Exit(1)
-	}
 	// Initialize default library driver
 	r.cd = csicommon.NewCSIDriver(driverName, version, nodeID)
 	if r.cd == nil {

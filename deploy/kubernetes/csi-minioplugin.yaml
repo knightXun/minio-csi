@@ -12,6 +12,10 @@ spec:
       labels:
         app: csi-minioplugin
     spec:
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
       serviceAccount: s3fs-csi-nodeplugin
       hostNetwork: true
       hostPID: true
@@ -20,6 +24,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: driver-registrar
+          imagePullPolicy: "IfNotPresent"
           image: quay.io/k8scsi/csi-node-driver-registrar:v1.0.2
           args:
             - "--v=5"
@@ -50,7 +55,7 @@ spec:
               add: ["SYS_ADMIN"]
             allowPrivilegeEscalation: true
           # for stable functionality replace canary with latest release version
-          image: quay.io/minio:canary
+          image: k8s.gcr.io/csi-s3fsplugin:v1.13.2-6979b55
           args:
             - "--nodeid=$(NODE_ID)"
             - "--endpoint=$(CSI_ENDPOINT)"
@@ -86,6 +91,14 @@ spec:
               readOnly: true
             - name: s3fs-csi-config
               mountPath: /etc/s3fs-csi-config/
+            - name: tmp
+              mountPath: /tmp
+            - name: etc
+              mountPath: /host/etc
+            - mountPath: /var/log
+              name: host-log
+            - name: usr
+              mountPath: /host/usr/lib
       volumes:
         - name: plugin-dir
           hostPath:
@@ -112,12 +125,24 @@ spec:
         - name: host-sys
           hostPath:
             path: /sys
+        - name: tmp
+          hostPath:
+            path: /tmp
         - name: lib-modules
           hostPath:
             path: /lib/modules
+        - name: etc
+          hostPath:
+            path: /etc
         - name: s3fs-csi-config
           configMap:
             name: s3fs-csi-config
+        - name: host-log
+          hostPath:
+            path: /var/log/
+        - name: usr
+          hostPath:
+            path: /usr/lib/
 ---
 apiVersion: v1
 kind: ConfigMap
